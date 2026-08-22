@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Pengaturan } from "../types";
 import { notifySimpanSuccess, notifySimpanError, notifyUnduhSuccess } from "../lib/swal";
+import { generatePerangkatAjar } from "../lib/aiClientService";
 
 interface GeneratorPerangkatAjarAIViewProps {
   config: Pengaturan;
@@ -126,25 +127,16 @@ Peserta didik mampu mengeplorasi bakat, minat, dan nilai-nilai karir, memahami p
     setGeneratingProgress(`Menyusun ${docMeta?.fullTitle || targetType}...`);
 
     try {
-      const res = await fetch("/api/ai/generate-perangkat-ajar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          docType: targetType,
-          formData
-        })
-      });
-
-      const data = await res.json();
-      if (data.status === "success" && data.html) {
-        const cleanedHtml = sanitizeHtmlForOutput(data.html);
+      const rawHtml = await generatePerangkatAjar(targetType, formData);
+      if (rawHtml) {
+        const cleanedHtml = sanitizeHtmlForOutput(rawHtml);
         setGeneratedDocs((prev) => ({
           ...prev,
           [targetType]: cleanedHtml
         }));
         notifySimpanSuccess(`${docMeta?.fullTitle || "Dokumen"} berhasil dibuat!`);
       } else {
-        throw new Error(data.message || "Gagal menghasilkan dokumen");
+        throw new Error("Gagal menghasilkan dokumen");
       }
     } catch (err: any) {
       console.error(err);
@@ -164,18 +156,9 @@ Peserta didik mampu mengeplorasi bakat, minat, dan nilai-nilai karir, memahami p
       setGeneratingProgress(`[${i + 1}/${types.length}] Menyusun ${docMeta?.fullTitle}...`);
 
       try {
-        const res = await fetch("/api/ai/generate-perangkat-ajar", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            docType: t,
-            formData
-          })
-        });
-
-        const data = await res.json();
-        if (data.status === "success" && data.html) {
-          const cleanedHtml = sanitizeHtmlForOutput(data.html);
+        const rawHtml = await generatePerangkatAjar(t, formData);
+        if (rawHtml) {
+          const cleanedHtml = sanitizeHtmlForOutput(rawHtml);
           setGeneratedDocs((prev) => ({
             ...prev,
             [t]: cleanedHtml

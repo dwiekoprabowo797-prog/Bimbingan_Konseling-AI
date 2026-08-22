@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Wand2, Printer, Download, Sparkles, FileText, Loader2, AlertTriangle, BookOpen } from "lucide-react";
 import { ModulFormState, Pengaturan } from "../types";
 import { notifySimpanSuccess, notifySimpanError, notifyCetakSuccess, notifyUnduhSuccess, notifyUnduhError } from "../lib/swal";
+import { generateModulAjar } from "../lib/aiClientService";
 
 interface ModulAjarAIViewProps {
   config: Pengaturan;
@@ -69,19 +70,13 @@ export const ModulAjarAIView: React.FC<ModulAjarAIViewProps> = ({ config }) => {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/ai/generate-modul", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
-      });
-
-      const data = await res.json();
-      if (data.status === "success" && data.html) {
-        const cleaned = cleanHtmlContent(data.html);
+      const rawHtml = await generateModulAjar(form);
+      if (rawHtml) {
+        const cleaned = cleanHtmlContent(rawHtml);
         setGeneratedHtml(cleaned);
         notifySimpanSuccess("Modul Ajar AI berhasil dibuat dan siap dicetak!");
       } else {
-        throw new Error(data.message || "Gagal membuat modul AI.");
+        throw new Error("Gagal membuat modul AI.");
       }
     } catch (err: any) {
       notifySimpanError(err.message || "Terjadi kesalahan saat memproses generator AI.");

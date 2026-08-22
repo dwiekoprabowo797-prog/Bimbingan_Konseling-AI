@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Pengaturan } from "../types";
 import { notifySimpanSuccess, notifySimpanError, notifyUnduhSuccess } from "../lib/swal";
+import { generatePerangkatAjarKbc } from "../lib/aiClientService";
 
 interface PerangkatAjarKBCViewProps {
   config: Pengaturan;
@@ -203,25 +204,16 @@ Peserta didik mampu mengeksplorasi minat, bakat, kelebihan, dan keterbatasan dir
     const payloadData = isModulType ? formDataModul : formData;
 
     try {
-      const res = await fetch("/api/ai/generate-perangkat-ajar-kbc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          docType: targetType,
-          formData: payloadData
-        })
-      });
-
-      const data = await res.json();
-      if (data.status === "success" && data.html) {
-        const cleanedHtml = sanitizeHtmlForOutput(data.html);
+      const rawHtml = await generatePerangkatAjarKbc(targetType, payloadData);
+      if (rawHtml) {
+        const cleanedHtml = sanitizeHtmlForOutput(rawHtml);
         setGeneratedDocs((prev) => ({
           ...prev,
           [targetType]: cleanedHtml
         }));
         notifySimpanSuccess(`${docMeta?.fullTitle || "Dokumen"} KBM berhasil dibuat!`);
       } else {
-        throw new Error(data.message || "Gagal menghasilkan dokumen KBM");
+        throw new Error("Gagal menghasilkan dokumen KBM");
       }
     } catch (err: any) {
       console.error(err);
@@ -245,18 +237,9 @@ Peserta didik mampu mengeksplorasi minat, bakat, kelebihan, dan keterbatasan dir
       setGeneratingProgress(`[${i + 1}/3] Menyusun ${t.title}...`);
 
       try {
-        const res = await fetch("/api/ai/generate-perangkat-ajar-kbc", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            docType: t.id,
-            formData: formDataModul
-          })
-        });
-
-        const data = await res.json();
-        if (data.status === "success" && data.html) {
-          const cleanedHtml = sanitizeHtmlForOutput(data.html);
+        const rawHtml = await generatePerangkatAjarKbc(t.id, formDataModul);
+        if (rawHtml) {
+          const cleanedHtml = sanitizeHtmlForOutput(rawHtml);
           setGeneratedDocs((prev) => ({
             ...prev,
             [t.id]: cleanedHtml
@@ -285,18 +268,9 @@ Peserta didik mampu mengeksplorasi minat, bakat, kelebihan, dan keterbatasan dir
       const payloadData = isModulType ? formDataModul : formData;
 
       try {
-        const res = await fetch("/api/ai/generate-perangkat-ajar-kbc", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            docType: t,
-            formData: payloadData
-          })
-        });
-
-        const data = await res.json();
-        if (data.status === "success" && data.html) {
-          const cleanedHtml = sanitizeHtmlForOutput(data.html);
+        const rawHtml = await generatePerangkatAjarKbc(t, payloadData);
+        if (rawHtml) {
+          const cleanedHtml = sanitizeHtmlForOutput(rawHtml);
           setGeneratedDocs((prev) => ({
             ...prev,
             [t]: cleanedHtml
