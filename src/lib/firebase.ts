@@ -40,8 +40,8 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const dbId = import.meta.env.VITE_FIREBASE_DATABASE_ID || firebaseConfigData.firestoreDatabaseId || "(default)";
 
 // Original Owner & Master Database Identifiers
-const PRIMARY_DATABASE_ID = firebaseConfigData.firestoreDatabaseId || "ai-studio-aplikasiguruai-962ea492-3615-4bc9-9964-b191b29c1a68";
-const PRIMARY_APPLET_ID = "962ea492-3615-4bc9-9964-b191b29c1a68";
+const PRIMARY_DATABASE_ID = firebaseConfigData.firestoreDatabaseId || "ai-studio-bimbingankonseli-28a56806-87c2-4fce-9bf0-5c43ad094f97";
+const PRIMARY_APPLET_ID = "28a56806-87c2-4fce-9bf0-5c43ad094f97";
 
 /**
  * Detects whether the application is running in a remixed / cloned workspace environment.
@@ -97,137 +97,169 @@ export const COLLECTIONS = {
   PENGATURAN: "pengaturan"
 };
 
-// Helpers for isolated local storage fallback when running in a remixed environment
-function getRemixStorage<T>(collectionName: string): T[] {
+// Helpers for unified local storage fallback
+function getLocalStorageData<T>(collectionName: string): T[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(`edadmin_remix_db_${collectionName}`);
+    const raw = localStorage.getItem(`edadmin_db_${collectionName}`) || localStorage.getItem(`edadmin_remix_db_${collectionName}`);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-function setRemixStorage<T>(collectionName: string, data: T[]) {
+function setLocalStorageData<T>(collectionName: string, data: T[]) {
   if (typeof window === "undefined") return;
   try {
+    localStorage.setItem(`edadmin_db_${collectionName}`, JSON.stringify(data));
     localStorage.setItem(`edadmin_remix_db_${collectionName}`, JSON.stringify(data));
+    window.dispatchEvent(new CustomEvent(`edadmin_db_update_${collectionName}`, { detail: data }));
     window.dispatchEvent(new CustomEvent(`edadmin_remix_db_update_${collectionName}`, { detail: data }));
   } catch (e) {
-    console.error("Error writing remix database storage:", e);
+    console.error("Error writing database storage:", e);
   }
 }
 
-// Generic Realtime Subscription with offline fallback & authorization guard
+// Generic Realtime Subscription with dual-layer fallback & authorization guard
 export function subscribeCollection<T>(collectionName: string, callback: (data: T[]) => void) {
+  // Always invoke callback immediately with cached local data
+  const initialData = getLocalStorageData<T>(collectionName);
+  if (initialData && initialData.length > 0) {
+    callback(initialData);
+  }
+
+  // Setup local update listener for instantaneous reactive UI
+  const handleLocalUpdate = (e: any) => {
+    if (e.detail) {
+      callback(e.detail as T[]);
+    } else {
+      callback(getLocalStorageData<T>(collectionName));
+    }
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener(`edadmin_db_update_${collectionName}`, handleLocalUpdate);
+    window.addEventListener(`edadmin_remix_db_update_${collectionName}`, handleLocalUpdate);
+  }
+
   if (isIsolatedRemix() || !firestore) {
-    callback(getRemixStorage<T>(collectionName));
-    const handleUpdate = (e: any) => {
-      if (e.detail) {
-        callback(e.detail as T[]);
-      } else {
-        callback(getRemixStorage<T>(collectionName));
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener(`edadmin_db_update_${collectionName}`, handleLocalUpdate);
+        window.removeEventListener(`edadmin_remix_db_update_${collectionName}`, handleLocalUpdate);
       }
     };
-    if (typeof window !== "undefined") {
-      window.addEventListener(`edadmin_remix_db_update_${collectionName}`, handleUpdate);
-      return () => window.removeEventListener(`edadmin_remix_db_update_${collectionName}`, handleUpdate);
-    }
-    return () => {};
   }
 
   try {
     const colRef = collection(firestore, collectionName);
-    return onSnapshot(
+    const unsub = onSnapshot(
       colRef, 
       (snapshot) => {
         const items: T[] = [];
         snapshot.forEach((docSnap) => {
           items.push({ id: docSnap.id, ...docSnap.data() } as unknown as T);
         });
-        callback(items);
+        if (items.length > 0 || initialData.length === 0) {
+          setLocalStorageData(collectionName, items);
+          callback(items);
+        }
       },
       (error) => {
         console.warn(`Firestore subscription notice on ${collectionName}:`, error?.message || error);
-        callback(getRemixStorage<T>(collectionName));
+        callback(getLocalStorageData<T>(collectionName));
       }
     );
+
+    return () => {
+      unsub();
+      if (typeof window !== "undefined") {
+        window.removeEventListener(`edadmin_db_update_${collectionName}`, handleLocalUpdate);
+        window.removeEventListener(`edadmin_remix_db_update_${collectionName}`, handleLocalUpdate);
+      }
+    };
   } catch (err) {
     console.warn(`Could not attach Firestore listener for ${collectionName}, using local storage:`, err);
-    callback(getRemixStorage<T>(collectionName));
-    return () => {};
+    callback(getLocalStorageData<T>(collectionName));
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener(`edadmin_db_update_${collectionName}`, handleLocalUpdate);
+        window.removeEventListener(`edadmin_remix_db_update_${collectionName}`, handleLocalUpdate);
+      }
+    };
   }
 }
 
-// Single Document Save/Update with authorization guard
+// Single Document Save/Update with dual-layer fallback
 export async function saveDocument(collectionName: string, id: string, data: Record<string, any>) {
-  if (isIsolatedRemix()) {
-    const current = getRemixStorage<any>(collectionName);
-    const idx = current.findIndex((item) => item.id === id);
-    const updatedItem = { ...(idx >= 0 ? current[idx] : {}), ...data, id, updatedAt: Date.now() };
+  // 1. Immediately update local storage
+  const current = getLocalStorageData<any>(collectionName);
+  const idx = current.findIndex((item) => item.id === id);
+  const updatedItem = { ...(idx >= 0 ? current[idx] : {}), ...data, id, updatedAt: Date.now() };
+  if (idx >= 0) {
+    current[idx] = updatedItem;
+  } else {
+    current.push(updatedItem);
+  }
+  setLocalStorageData(collectionName, current);
+
+  if (isIsolatedRemix() || !firestore) {
+    return;
+  }
+
+  // 2. Sync to Firestore (catch permission/network errors gracefully)
+  try {
+    const docRef = doc(firestore, collectionName, id);
+    await setDoc(docRef, { ...data, updatedAt: Date.now() }, { merge: true });
+  } catch (err: any) {
+    console.warn(`Firestore sync note for ${collectionName}/${id}: ${err?.message || err}. Data saved locally.`);
+  }
+}
+
+// Single Document Delete with dual-layer fallback
+export async function deleteDocument(collectionName: string, id: string) {
+  // 1. Immediately update local storage
+  const current = getLocalStorageData<any>(collectionName);
+  if (current && current.length > 0) {
+    const filtered = current.filter((item) => item.id !== id);
+    setLocalStorageData(collectionName, filtered);
+  }
+
+  if (isIsolatedRemix() || !firestore) {
+    return;
+  }
+
+  // 2. Sync deletion to Firestore
+  try {
+    const docRef = doc(firestore, collectionName, id);
+    await deleteDoc(docRef);
+  } catch (err: any) {
+    console.warn(`Firestore delete note for ${collectionName}/${id}: ${err?.message || err}. Local state updated.`);
+  }
+}
+
+// Batch Save Documents with dual-layer fallback
+export async function batchSaveDocuments(collectionName: string, items: Array<{ id: string; [key: string]: any }>) {
+  if (!items || items.length === 0) return;
+  
+  // 1. Immediately update local storage
+  const current = getLocalStorageData<any>(collectionName);
+  items.forEach((item) => {
+    const idx = current.findIndex((existing) => existing.id === item.id);
+    const updatedItem = { ...(idx >= 0 ? current[idx] : {}), ...item, updatedAt: Date.now() };
     if (idx >= 0) {
       current[idx] = updatedItem;
     } else {
       current.push(updatedItem);
     }
-    setRemixStorage(collectionName, current);
+  });
+  setLocalStorageData(collectionName, current);
+
+  if (isIsolatedRemix() || !firestore) {
     return;
   }
 
-  try {
-    const docRef = doc(firestore, collectionName, id);
-    await setDoc(docRef, { ...data, updatedAt: Date.now() }, { merge: true });
-  } catch (err: any) {
-    console.error(`Error saving document in ${collectionName}:`, err);
-    throw err;
-  }
-}
-
-// Single Document Delete with authorization guard
-export async function deleteDocument(collectionName: string, id: string) {
-  // Always update local remix storage first so cached state clears immediately
-  const current = getRemixStorage<any>(collectionName);
-  if (current && current.length > 0) {
-    const filtered = current.filter((item) => item.id !== id);
-    setRemixStorage(collectionName, filtered);
-  }
-
-  if (isIsolatedRemix()) {
-    return;
-  }
-
-  try {
-    const docRef = doc(firestore, collectionName, id);
-    await deleteDoc(docRef);
-  } catch (err: any) {
-    console.error(`Error deleting document in ${collectionName}:`, err);
-    // Ignore error if document was already deleted or not found
-    if (err?.code === "not-found" || err?.message?.includes("not found")) {
-      return;
-    }
-    throw err;
-  }
-}
-
-// Batch Save Documents with authorization guard
-export async function batchSaveDocuments(collectionName: string, items: Array<{ id: string; [key: string]: any }>) {
-  if (!items || items.length === 0) return;
-  
-  if (isIsolatedRemix()) {
-    const current = getRemixStorage<any>(collectionName);
-    items.forEach((item) => {
-      const idx = current.findIndex((existing) => existing.id === item.id);
-      const updatedItem = { ...(idx >= 0 ? current[idx] : {}), ...item, updatedAt: Date.now() };
-      if (idx >= 0) {
-        current[idx] = updatedItem;
-      } else {
-        current.push(updatedItem);
-      }
-    });
-    setRemixStorage(collectionName, current);
-    return;
-  }
-
+  // 2. Sync to Firestore
   try {
     const batch = writeBatch(firestore);
     items.forEach((item) => {
@@ -236,8 +268,7 @@ export async function batchSaveDocuments(collectionName: string, items: Array<{ 
     });
     await batch.commit();
   } catch (err: any) {
-    console.error(`Error batch saving documents in ${collectionName}:`, err);
-    throw err;
+    console.warn(`Firestore batch save note for ${collectionName}: ${err?.message || err}. Data saved locally.`);
   }
 }
 
@@ -250,49 +281,55 @@ export function checkPengaturanDatabaseAuthorization(): { authorized: boolean; r
 
 // Pengaturan special helper (Doc ID: "config") with isolated database connection & security guard
 export async function savePengaturan(config: Pengaturan) {
-  if (isIsolatedRemix()) {
-    if (typeof window !== "undefined") {
-      localStorage.setItem("edadmin_remix_db_pengaturan", JSON.stringify(config));
-      window.dispatchEvent(new CustomEvent("edadmin_remix_db_update_pengaturan", { detail: config }));
-    }
+  if (typeof window !== "undefined") {
+    localStorage.setItem("edadmin_pengaturan_isolated", JSON.stringify(config));
+    localStorage.setItem("edadmin_remix_db_pengaturan", JSON.stringify(config));
+    window.dispatchEvent(new CustomEvent("edadmin_remix_db_update_pengaturan", { detail: config }));
+  }
+
+  if (isIsolatedRemix() || !firestore) {
     return;
   }
 
   try {
     const docRef = doc(firestore, COLLECTIONS.PENGATURAN, "config");
     await setDoc(docRef, { ...config, updatedAt: Date.now() }, { merge: true });
-    if (typeof window !== "undefined") {
-      localStorage.setItem("edadmin_pengaturan_isolated", JSON.stringify(config));
-    }
   } catch (err: any) {
-    console.error("Error saving pengaturan:", err);
-    throw err;
+    console.warn("Firestore savePengaturan note:", err?.message || err);
   }
 }
 
 export function subscribePengaturan(callback: (config: Pengaturan) => void) {
-  if (isIsolatedRemix() || !firestore) {
-    if (typeof window !== "undefined") {
-      const cached = localStorage.getItem("edadmin_remix_db_pengaturan") || localStorage.getItem("edadmin_pengaturan_isolated");
-      if (cached) {
-        try {
-          callback(JSON.parse(cached));
-        } catch (e) {
-          console.warn("Could not parse isolated local pengaturan cache:", e);
-        }
+  if (typeof window !== "undefined") {
+    const cached = localStorage.getItem("edadmin_pengaturan_isolated") || localStorage.getItem("edadmin_remix_db_pengaturan");
+    if (cached) {
+      try {
+        callback(JSON.parse(cached));
+      } catch (e) {
+        console.warn("Could not parse isolated local pengaturan cache:", e);
       }
-      const handleUpdate = (e: any) => {
-        if (e.detail) callback(e.detail);
-      };
-      window.addEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
-      return () => window.removeEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
     }
-    return () => {};
+  }
+
+  const handleUpdate = (e: any) => {
+    if (e.detail) callback(e.detail);
+  };
+
+  if (typeof window !== "undefined") {
+    window.addEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
+  }
+
+  if (isIsolatedRemix() || !firestore) {
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
+      }
+    };
   }
 
   try {
     const docRef = doc(firestore, COLLECTIONS.PENGATURAN, "config");
-    return onSnapshot(
+    const unsub = onSnapshot(
       docRef, 
       (docSnap) => {
         if (docSnap.exists()) {
@@ -307,9 +344,20 @@ export function subscribePengaturan(callback: (config: Pengaturan) => void) {
         console.warn("Firestore pengaturan subscription notice:", error?.message || error);
       }
     );
+
+    return () => {
+      unsub();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
+      }
+    };
   } catch (err) {
     console.warn("Could not attach Firestore pengaturan listener:", err);
-    return () => {};
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("edadmin_remix_db_update_pengaturan", handleUpdate);
+      }
+    };
   }
 }
 
@@ -330,7 +378,7 @@ export async function clearAllDatabaseCollections() {
 
   // 1. Always purge local storage fallback for all collections & dispatch update events
   collectionsToClear.forEach((colName) => {
-    setRemixStorage(colName, []);
+    setLocalStorageData(colName, []);
   });
 
   if (isIsolatedRemix()) {
